@@ -17,14 +17,24 @@ const nextConfig = {
     unoptimized: true,
   },
   experimental: {
-    webpackBuildWorker: true,
-    parallelServerBuildTraces: true,
-    parallelServerCompiles: true,
+    // Only use features available in Next.js 14.0.4
+    optimizeCss: true,
+    serverMinification: true,
+    turbo: false,
   },
   swcMinify: true,
   poweredByHeader: false,
   compress: true,
   productionBrowserSourceMaps: false,
+  webpack: (config, { isServer }) => {
+    config.optimization.splitChunks = {
+      chunks: 'all',
+      maxInitialRequests: 25,
+      minSize: 20000
+    };
+
+    return config;
+  },
 }
 
 mergeConfig(nextConfig, userConfig)
