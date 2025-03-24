@@ -1,0 +1,115 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+body {
+  background-color: #050508;
+  color: white;
+  margin: 0;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Roboto", "Oxygen", "Ubuntu", "Cantarell", "Fira Sans",
+    "Droid Sans", "Helvetica Neue", sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Crystal shiny effect for user avatars */
+.shadow-glow {
+  box-shadow: 0 0 5px rgba(255, 255, 255, 0.5), 0 0 10px rgba(168, 85, 247, 0.3), 0 0 15px rgba(168, 85, 247, 0.2);
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(-10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-fadeIn {
+  animation: fadeIn 0.3s ease-in-out forwards;
+}
+
+/* Tailwind color classes */
+.bg-purple-900\/20 {
+  background-color: rgba(76, 29, 149, 0.2);
+}
+
+.bg-purple-900\/30 {
+  background-color: rgba(76, 29, 149, 0.3);
+}
+
+.bg-purple-800\/30 {
+  background-color: rgba(91, 33, 182, 0.3);
+}
+
+.bg-purple-600\/80 {
+  background-color: rgba(124, 58, 237, 0.8);
+}
+
+.bg-red-900\/20 {
+  background-color: rgba(127, 29, 29, 0.2);
+}
+
+.bg-red-600\/70 {
+  background-color: rgba(220, 38, 38, 0.7);
+}
+
+.bg-pink-500\/70 {
+  background-color: rgba(236, 72, 153, 0.7);
+}
+
+.border-purple-500\/30 {
+  border-color: rgba(139, 92, 246, 0.3);
+}
+
+.border-purple-500\/20 {
+  border-color: rgba(139, 92, 246, 0.2);
+}
+
+.border-purple-400\/70 {
+  border-color: rgba(167, 139, 250, 0.7);
+}
+
+.border-red-500\/30 {
+  border-color: rgba(239, 68, 68, 0.3);
+}
+
+.border-red-500\/20 {
+  border-color: rgba(239, 68, 68, 0.2);
+}
+
+.border-pink-400\/50 {
+  border-color: rgba(244, 114, 182, 0.5);
+}
+
+.text-purple-300 {
+  color: rgb(196, 181, 253);
+}
+
+.text-purple-200 {
+  color: rgb(221, 214, 254);
+}
+
+.text-red-200 {
+  color: rgb(254, 202, 202);
+}
+
+.bg-\[\#050508\] {
+  background-color: #050508;
+}
+
+.bg-\[\#1a1a2e\]\/80 {
+  background-color: rgba(26, 26, 46, 0.8);
+}
+
+.from-\[\#1a1a2e\]\/90 {
+  --tw-gradient-from: rgba(26, 26, 46, 0.9);
+}
+
+.to-\[\#16162a\]\/80 {
+  --tw-gradient-to: rgba(22, 22, 42, 0.8);
+}
+
