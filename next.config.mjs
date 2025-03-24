@@ -20,7 +20,6 @@ const nextConfig = {
     // Only use features available in Next.js 14.0.4
     optimizeCss: true,
     serverMinification: true,
-    turbo: false,
   },
   swcMinify: true,
   poweredByHeader: false,
