@@ -1,7 +1,7 @@
 "use client"
 
 import type React from "react"
-import { useState, useEffect, useRef } from "react"
+import { useState, useEffect, useRef, useCallback } from "react"
 
 // Define types
 interface Badge {
@@ -56,64 +56,135 @@ export default function Home() {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const userPositionsRef = useRef<{ x: number; y: number; size: number; user: User | TempUser }[]>([])
 
-  // Load users from localStorage on initial render
+  // Handle notifications properly with cleanup
+  const showNotification = useCallback((message: string) => {
+    setNotification(message);
+    const timer = setTimeout(() => {
+      setNotification("");
+    }, 5000);
+    
+    // Return cleanup function
+    return () => clearTimeout(timer);
+  }, []);
+
+  // Load users from localStorage on initial render with proper cleanup
   useEffect(() => {
-    const savedUsers = localStorage.getItem("users")
+    const savedUsers = localStorage.getItem("users");
     if (savedUsers) {
       try {
-        setUsers(JSON.parse(savedUsers))
+        setUsers(JSON.parse(savedUsers));
       } catch (e) {
-        console.error("Failed to parse saved users", e)
+        console.error("Failed to parse saved users", e);
+        // Show error notification to user
+        showNotification("Failed to load saved users");
       }
     }
-  }, [])
+  }, [showNotification]);
 
   // Save users to localStorage when they change
   useEffect(() => {
     if (users.length > 0) {
-      localStorage.setItem("users", JSON.stringify(users))
+      try {
+        localStorage.setItem("users", JSON.stringify(users));
+      } catch (e) {
+        console.error("Failed to save users", e);
+        showNotification("Failed to save users");
+      }
     }
-  }, [users])
+  }, [users, showNotification]);
 
-  // Draw the graph whenever users or tempUsers change
-  useEffect(() => {
-    drawGraph()
-  }, [users, tempUsers, hoverInfo])
+  // API fetch with proper error handling and AbortController
+  const fetchUser = useCallback(async (username: string) => {
+    // Create abort controller for cleanup
+    const controller = new AbortController();
+    const signal = controller.signal;
+
+    setIsLoading(true);
+    try {
+      const response = await fetch(`/api/chart/user`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username }),
+        signal, // Add abort signal
+      });
+
+      if (!response.ok) {
+        throw new Error(`HTTP error! Status: ${response.status}`);
+      }
+
+      const data = await response.json();
+      
+      if (data.error) {
+        throw new Error(data.error);
+      }
+
+      // Handle user data
+      if (data.isVerified) {
+        setUsers((prev) => [...prev, data]);
+        showNotification(`Added @${username} to the chart!`);
+      } else {
+        setTempUsers((prev) => [...prev, data]);
+        showNotification(`Added @${username} as temporary user. Connect wallet to verify.`);
+      }
+    } catch (error) {
+      if (error instanceof Error && error.name !== 'AbortError') {
+        console.error("Error fetching user:", error);
+        showNotification(`Error: ${error.message || "Failed to fetch user"}`);
+      }
+    } finally {
+      setIsLoading(false);
+    }
+
+    return () => controller.abort();
+  }, [showNotification]);
 
   // Handle mouse movement for hover effects
-  const handleMouseMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
+  useEffect(() => {
     const canvas = canvasRef.current
     if (!canvas) return
 
-    const rect = canvas.getBoundingClientRect()
-    const mouseX = e.clientX - rect.left
-    const mouseY = e.clientY - rect.top
+    const handleMouseMove = (e: MouseEvent) => {
+      const rect = canvas.getBoundingClientRect()
+      const mouseX = e.clientX - rect.left
+      const mouseY = e.clientY - rect.top
 
-    // Check if mouse is over any user position
-    const hoveredUser = userPositionsRef.current.find((item) => {
-      const { x, y, size } = item
-      return mouseX >= x - size / 2 && mouseX <= x + size / 2 && mouseY >= y - size / 2 && mouseY <= y + size / 2
-    })
-
-    if (hoveredUser) {
-      setHoverInfo({
-        user: hoveredUser.user,
-        x: hoveredUser.x,
-        y: hoveredUser.y,
+      // Check if mouse is over any user position
+      const hoveredUser = userPositionsRef.current.find((item) => {
+        const { x, y, size } = item
+        return mouseX >= x - size / 2 && mouseX <= x + size / 2 && mouseY >= y - size / 2 && mouseY <= y + size / 2
       })
-    } else {
-      setHoverInfo(null)
-    }
-  }
 
-  // Function to draw the graph
-  const drawGraph = () => {
+      if (hoveredUser) {
+        setHoverInfo({
+          user: hoveredUser.user,
+          x: hoveredUser.x,
+          y: hoveredUser.y,
+        })
+      } else {
+        setHoverInfo(null)
+      }
+    }
+
+    // Add event listener
+    canvas.addEventListener('mousemove', handleMouseMove)
+
+    // Cleanup function
+    return () => {
+      canvas.removeEventListener('mousemove', handleMouseMove)
+    }
+  }, []) // Empty dependency array since we only want to set up the listener once
+
+  // Draw the graph with proper cleanup
+  const drawGraph = useCallback(() => {
     const canvas = canvasRef.current
     if (!canvas) return
 
     const ctx = canvas.getContext("2d")
     if (!ctx) return
 
+    // Image cache to avoid reloading the same images
+    const imageCache = new Map<string, HTMLImageElement>()
+    
     // Reset user positions
     userPositionsRef.current = []
 
@@ -214,172 +285,149 @@ export default function Home() {
     // Draw all users
     const allUsers = [...users, ...tempUsers]
 
-    allUsers.forEach((user) => {
-      // Determine if it's a temp user
-      const isTemp = !("walletScore" in user)
+    // Use requestAnimationFrame for smooth rendering
+    const draw = () => {
+      // Load all profile images first and then draw the canvas
+      const loadImage = (url: string): Promise<HTMLImageElement> => {
+        return new Promise((resolve, reject) => {
+          if (imageCache.has(url)) {
+            resolve(imageCache.get(url)!)
+            return
+          }
+          
+          const img = new window.Image()
+          img.crossOrigin = "anonymous"
+          img.onload = () => {
+            imageCache.set(url, img)
+            resolve(img)
+          }
+          img.onerror = () => {
+            console.error(`Failed to load image: ${url}`)
+            reject(new Error(`Failed to load image: ${url}`))
+          }
+          img.src = url
+        })
+      }
 
-      // Calculate position
-      const x = 30 + (user.totalScore / maxScore) * (rect.width - 60)
-      const y =
-        rect.height -
-        30 -
-        ((isTemp ? user.badges.length : (user as User).badges.length) / maxBadges) * (rect.height - 60)
+      // Draw user data and prepare for image loading
+      allUsers.forEach((user) => {
+        // Determine if it's a temp user
+        const isTemp = !("walletScore" in user)
 
-      // Define image size (larger square - one grid cell)
-      const cellSize = Math.min(rect.width, rect.height) / 10
-      const imageSize = cellSize * 0.8 // 80% of a grid cell
+        // Calculate position
+        const x = 30 + (user.totalScore / maxScore) * (rect.width - 60)
+        const y =
+          rect.height -
+          30 -
+          ((isTemp ? user.badges.length : (user as User).badges.length) / maxBadges) * (rect.height - 60)
 
-      // Store user position for hover detection
-      userPositionsRef.current.push({
-        x,
-        y,
-        size: imageSize,
-        user,
-      })
+        // Define image size (larger square - one grid cell)
+        const cellSize = Math.min(rect.width, rect.height) / 10
+        const imageSize = cellSize * 0.8 // 80% of a grid cell
 
-      // Draw username
-      ctx.fillStyle = "rgba(255, 255, 255, 0.8)"
-      ctx.font = "10px Arial"
-      ctx.textAlign = "center"
-      ctx.fillText(`@${user.username}`, x, y + imageSize / 2 + 15)
+        // Store user position for hover detection
+        userPositionsRef.current.push({
+          x,
+          y,
+          size: imageSize,
+          user,
+        })
 
-      // Draw profile image background glow
-      const glowGradient = ctx.createRadialGradient(x, y, imageSize / 2, x, y, imageSize)
-      glowGradient.addColorStop(0, isTemp ? "rgba(255, 100, 100, 0.8)" : "rgba(138, 43, 226, 0.8)")
-      glowGradient.addColorStop(1, "rgba(0, 0, 0, 0)")
+        // Draw username
+        ctx.fillStyle = "rgba(255, 255, 255, 0.8)"
+        ctx.font = "10px Arial"
+        ctx.textAlign = "center"
+        ctx.fillText(`@${user.username}`, x, y + imageSize / 2 + 15)
 
-      ctx.beginPath()
-      ctx.rect(x - imageSize / 2 - 5, y - imageSize / 2 - 5, imageSize + 10, imageSize + 10)
-      ctx.fillStyle = glowGradient
-      ctx.fill()
+        // Draw profile image background glow
+        const glowGradient = ctx.createRadialGradient(x, y, imageSize / 2, x, y, imageSize)
+        glowGradient.addColorStop(0, isTemp ? "rgba(255, 100, 100, 0.8)" : "rgba(138, 43, 226, 0.8)")
+        glowGradient.addColorStop(1, "rgba(0, 0, 0, 0)")
 
-      // Draw profile image border (square)
-      ctx.beginPath()
-      ctx.rect(x - imageSize / 2, y - imageSize / 2, imageSize, imageSize)
-      ctx.strokeStyle = isTemp ? "rgba(255, 100, 100, 0.9)" : "rgba(138, 43, 226, 0.9)"
-      ctx.lineWidth = 2
-      ctx.stroke()
+        ctx.beginPath()
+        ctx.rect(x - imageSize / 2 - 5, y - imageSize / 2 - 5, imageSize + 10, imageSize + 10)
+        ctx.fillStyle = glowGradient
+        ctx.fill()
 
-      // Load and draw profile image (square)
-      const img = new Image()
-      img.crossOrigin = "anonymous"
-      img.src = user.profileImageUrl
-
-      img.onload = () => {
-        // Draw square profile image
-        ctx.save()
+        // Draw profile image border (square)
         ctx.beginPath()
         ctx.rect(x - imageSize / 2, y - imageSize / 2, imageSize, imageSize)
-        ctx.clip()
-        ctx.drawImage(img, x - imageSize / 2, y - imageSize / 2, imageSize, imageSize)
-        ctx.restore()
-      }
-    })
+        ctx.strokeStyle = isTemp ? "rgba(255, 100, 100, 0.9)" : "rgba(138, 43, 226, 0.9)"
+        ctx.lineWidth = 2
+        ctx.stroke()
 
-    // Draw hover info if available
-    if (hoverInfo) {
-      const { user, x, y } = hoverInfo
-      const isTemp = !("walletScore" in user)
+        // Load and draw profile image
+        loadImage(user.profileImageUrl)
+          .then(img => {
+            // Draw square profile image
+            ctx.save()
+            ctx.beginPath()
+            ctx.rect(x - imageSize / 2, y - imageSize / 2, imageSize, imageSize)
+            ctx.clip()
+            ctx.drawImage(img, x - imageSize / 2, y - imageSize / 2, imageSize, imageSize)
+            ctx.restore()
+          })
+          .catch(err => {
+            console.error(`Error loading profile image for ${user.username}:`, err)
+          })
+      })
 
-      // Draw info box
-      ctx.fillStyle = isTemp ? "rgba(255, 100, 100, 0.9)" : "rgba(138, 43, 226, 0.9)"
-      ctx.fillRect(x - 80, y - 100, 160, 80)
+      // Draw hover info if available
+      if (hoverInfo) {
+        const { user, x, y } = hoverInfo
+        const isTemp = !("walletScore" in user)
 
-      // Draw info text
-      ctx.fillStyle = "white"
-      ctx.font = "12px Arial"
-      ctx.textAlign = "center"
-      ctx.fillText(`Score: ${user.totalScore}`, x, y - 75)
-      ctx.fillText(`Badges: ${user.badges.length}`, x, y - 55)
+        // Draw info box
+        ctx.fillStyle = isTemp ? "rgba(255, 100, 100, 0.9)" : "rgba(138, 43, 226, 0.9)"
+        ctx.fillRect(x - 80, y - 100, 160, 80)
 
-      if (!isTemp) {
-        ctx.fillText(`Twitter: ${(user as User).twitterScore}`, x, y - 35)
-      } else {
-        ctx.fillText("Connect wallet for full score", x, y - 35)
+        // Draw info text
+        ctx.fillStyle = "white"
+        ctx.font = "12px Arial"
+        ctx.textAlign = "center"
+        ctx.fillText(`Score: ${user.totalScore}`, x, y - 75)
+        ctx.fillText(`Badges: ${user.badges.length}`, x, y - 55)
+
+        if (!isTemp) {
+          ctx.fillText(`Twitter: ${(user as User).twitterScore}`, x, y - 35)
+        } else {
+          ctx.fillText("Connect wallet for full score", x, y - 35)
+        }
       }
     }
-  }
+
+    // Start drawing
+    const animationId = requestAnimationFrame(draw)
+    
+    // Return a cleanup function
+    return () => {
+      cancelAnimationFrame(animationId)
+      imageCache.clear() // Clear the image cache on cleanup
+    }
+  }, [users, tempUsers, hoverInfo])
+
+  // Draw the graph whenever users or tempUsers change
+  useEffect(() => {
+    const cleanup = drawGraph()
+    return () => {
+      if (cleanup && typeof cleanup === 'function') {
+        cleanup()
+      }
+    }
+  }, [drawGraph])
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
     if (!username.trim()) return
 
-    setIsLoading(true)
-
-    try {
-      // In a real app, you would fetch actual user data from Twitter API
-      // For now, we'll simulate with random data
-      const twitterScore = Math.floor(Math.random() * 100)
-      const walletScore = Math.floor(Math.random() * 100)
-      const telegramScore = Math.floor(Math.random() * 100)
-
-      // Calculate total score based on algorithm
-      const totalScore = calculateScore(twitterScore, walletScore, telegramScore)
-
-      // Generate random badges
-      const badges: Badge[] = [
-        { id: "1", name: "Early Adopter", icon: "🌟" },
-        { id: "2", name: "Content Creator", icon: "📝" },
-        { id: "3", name: "Community Builder", icon: "🏗️" },
-      ].filter(() => Math.random() > 0.5)
-
-      // Check if this is a full user or temp user
-      const isFullUser = Math.random() > 0.3 // 70% chance of being a full user
-
-      if (isFullUser) {
-        const newUser: User = {
-          id: Date.now().toString(),
-          username,
-          profileImageUrl: `/placeholder.svg?height=100&width=100`,
-          twitterScore,
-          walletScore,
-          telegramScore,
-          totalScore,
-          badges,
-          isVerified: Math.random() > 0.7,
-        }
-        setUsers([...users, newUser])
-        setNotification(`@${username} has been added to the graph with full data.`)
-      } else {
-        // Create temporary user with only Twitter data
-        const tempUser: TempUser = {
-          id: `temp-${Date.now().toString()}`,
-          username,
-          profileImageUrl: `/placeholder.svg?height=100&width=100`,
-          twitterScore,
-          totalScore: twitterScore, // For temp users, total score is just Twitter score
-          badges: badges.slice(0, 1), // Temp users get fewer badges
-        }
-        setTempUsers([...tempUsers, tempUser])
-        setNotification(
-          `@${username} has been added with Twitter data only. Connect wallet and Telegram for full score.`,
-        )
-      }
-
-      // Clear notification after 5 seconds
-      setTimeout(() => {
-        setNotification("")
-      }, 5000)
-
-      setUsername("")
-    } catch (error) {
-      console.error("Error fetching user data:", error)
-      setNotification("Error adding user. Please try again.")
-    } finally {
-      setIsLoading(false)
-    }
+    fetchUser(username)
   }
 
   const clearUsers = () => {
     setUsers([])
     setTempUsers([])
     localStorage.removeItem("users")
-    setNotification("All users have been cleared.")
-
-    // Clear notification after 3 seconds
-    setTimeout(() => {
-      setNotification("")
-    }, 3000)
+    showNotification("All users have been cleared.")
   }
 
   return (
@@ -656,8 +704,6 @@ export default function Home() {
                   style={{
                     boxShadow: "0 0 30px rgba(138, 43, 226, 0.15)",
                   }}
-                  onMouseMove={handleMouseMove}
-                  onMouseLeave={() => setHoverInfo(null)}
                 />
                 <div className="mt-2 text-xs text-purple-300 text-center">
                   <span className="italic">Hover over a user to see details</span>
